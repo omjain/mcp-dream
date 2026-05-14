@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-dream"
+version = "0.1.0"
+description = "Let AI dream on your problems while you sleep. An MCP server + agent that runs autonomous overnight exploration sessions and leaves you a morning report."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "mcp-dream contributors" },
+]
+keywords = ["mcp", "ai", "agent", "anthropic", "claude", "autonomous", "overnight"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "anthropic>=0.40.0",
+    "mcp>=1.2.0",
+    "httpx>=0.27.0",
+    "tomli>=2.0.0; python_version<'3.11'",
+    "click>=8.1.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+ollama = ["ollama>=0.4.0"]
+dev = ["pytest>=8.0", "ruff>=0.5.0"]
+
+[project.scripts]
+mcp-dream = "mcp_dream.cli:main"
+mcp-dream-server = "mcp_dream.server:main"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_USERNAME/mcp-dream"
+Issues = "https://github.com/YOUR_USERNAME/mcp-dream/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_dream"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
