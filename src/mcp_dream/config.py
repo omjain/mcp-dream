@@ -57,13 +57,16 @@ class ToolsConfig:
 class ProviderConfig:
     """Which LLM provider to use for the dream loop."""
 
-    # "anthropic" or "ollama"
+    # "anthropic", "ollama", or "openrouter"
     name: str = "anthropic"
     # Anthropic-specific
     anthropic_model: str = "claude-opus-4-7"
     # Ollama-specific
     ollama_model: str = "llama3.2"
     ollama_host: str = "http://localhost:11434"
+    # OpenRouter (OpenAI-compatible) specific
+    openrouter_model: str = "openai/gpt-oss-120b:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
 
 @dataclass
@@ -102,6 +105,8 @@ def _coerce(raw: dict[str, Any], home_override: Path | None = None) -> Config:
             anthropic_model=prov.get("anthropic_model", cfg.provider.anthropic_model),
             ollama_model=prov.get("ollama_model", cfg.provider.ollama_model),
             ollama_host=prov.get("ollama_host", cfg.provider.ollama_host),
+            openrouter_model=prov.get("openrouter_model", cfg.provider.openrouter_model),
+            openrouter_base_url=prov.get("openrouter_base_url", cfg.provider.openrouter_base_url),
         )
 
     tools = raw.get("tools", {})

@@ -143,6 +143,135 @@ def _run_anthropic(cfg: Config, run: DreamRun) -> None:
         messages.append({"role": "user", "content": tool_results})
 
 
+# ── OpenRouter provider (OpenAI-compatible API, with tool-use) ───────────────
+
+
+def _anthropic_tools_to_openai(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate our Anthropic-shaped tool schemas to OpenAI function-call shape."""
+    out = []
+    for s in schemas:
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": s["name"],
+                    "description": s.get("description", ""),
+                    "parameters": s["input_schema"],
+                },
+            }
+        )
+    return out
+
+
+def _run_openrouter(cfg: Config, run: DreamRun) -> None:
+    """Run a dream against an OpenAI-compatible endpoint (OpenRouter).
+
+    Uses the OpenAI SDK with `base_url` pointed at OpenRouter and translates
+    our internal Anthropic-shaped tool schemas into OpenAI function-call shape.
+    The free-tier OpenRouter models we target (e.g. openai/gpt-oss-120b:free)
+    advertise OpenAI-compatible tool use.
+    """
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError(
+            "The openrouter provider needs the `openai` package. Install it with: "
+            "pip install openai"
+        ) from e
+
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is not set. Export it before starting the dream."
+        )
+
+    client = OpenAI(api_key=api_key, base_url=cfg.provider.openrouter_base_url)
+    schemas, impls = build_toolset(cfg.tools, run.scratch_notes)
+    openai_tools = _anthropic_tools_to_openai(schemas)
+    tracker = BudgetTracker(config=cfg.budget, model=cfg.provider.openrouter_model)
+    run.tracker = tracker
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": run.goal},
+    ]
+    run.status = "dreaming"
+
+    while True:
+        stop = tracker.check()
+        if stop is not None:
+            run.stop_reason = stop
+            break
+
+        try:
+            response = client.chat.completions.create(
+                model=cfg.provider.openrouter_model,
+                messages=messages,
+                tools=openai_tools,
+                max_tokens=2048,
+            )
+        except Exception as e:  # noqa: BLE001
+            run.error = f"OpenRouter API error: {e}"
+            run.stop_reason = "model_stopped"
+            break
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            tracker.record_turn(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+        else:
+            tracker.record_turn()
+
+        if not response.choices:
+            run.stop_reason = "model_stopped"
+            break
+
+        choice = response.choices[0]
+        msg = choice.message
+        tool_calls = getattr(msg, "tool_calls", None) or []
+
+        # Append assistant turn (preserving tool_calls so subsequent tool
+        # results can reference them by id).
+        assistant_entry: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+        if tool_calls:
+            assistant_entry["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments or "{}",
+                    },
+                }
+                for tc in tool_calls
+            ]
+        messages.append(assistant_entry)
+
+        if not tool_calls:
+            # Model stopped calling tools — dream is over.
+            run.stop_reason = "model_stopped"
+            break
+
+        # Execute each tool call and feed results back as role=tool messages.
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError as e:
+                args = {}
+                result = f"[tool {tc.function.name} bad json args] {e}"
+            else:
+                result = dispatch(tc.function.name, args, impls)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                }
+            )
+
+
 # ── Ollama provider (no tool-use, simplified loop) ───────────────────────────
 
 
@@ -241,6 +370,26 @@ def _synthesize_report(cfg: Config, run: DreamRun) -> str:
                 run.goal, run.started_at, stop_reason, stats, run.scratch_notes
             )
 
+    if cfg.provider.name == "openrouter":
+        try:
+            from openai import OpenAI
+
+            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            client = OpenAI(api_key=api_key, base_url=cfg.provider.openrouter_base_url)
+            resp = client.chat.completions.create(
+                model=cfg.provider.openrouter_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return text or render_pre_report(
+                run.goal, run.started_at, stop_reason, stats, run.scratch_notes
+            )
+        except Exception:
+            return render_pre_report(
+                run.goal, run.started_at, stop_reason, stats, run.scratch_notes
+            )
+
     # Ollama synthesis
     try:
         import ollama  # type: ignore
@@ -284,6 +433,8 @@ def dream(cfg: Config, goal: str, dream_id: str | None = None) -> DreamRun:
             _run_anthropic(cfg, run)
         elif cfg.provider.name == "ollama":
             _run_ollama(cfg, run)
+        elif cfg.provider.name == "openrouter":
+            _run_openrouter(cfg, run)
         else:
             raise RuntimeError(f"Unknown provider: {cfg.provider.name}")
     except Exception as e:  # noqa: BLE001
