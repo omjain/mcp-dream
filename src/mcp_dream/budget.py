@@ -27,6 +27,10 @@ PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-4-6": (15.0, 75.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
+    # OpenRouter free tier — actual cost is $0; we set zero so the dollar cap
+    # never trips spuriously for these models.
+    "openai/gpt-oss-120b:free": (0.0, 0.0),
+    "openai/gpt-oss-20b:free": (0.0, 0.0),
 }
 _FALLBACK_PRICING = (15.0, 75.0)  # assume expensive if unknown
 
